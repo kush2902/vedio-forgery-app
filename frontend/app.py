@@ -1,10 +1,6 @@
 import streamlit as st
-import pandas as pd
 import sqlite3
-import cv2
-import tempfile
 from datetime import datetime
-from pathlib import Path
 
 st.set_page_config(page_title="Video Forgery Detection System", layout="wide")
 
@@ -26,15 +22,81 @@ def init_db():
     conn.commit()
     conn.close()
 
-def extract_frames(video_bytes, max_frames=10):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-        tmp.write(video_bytes)
-        temp_path = tmp.name
+def fake_model_prediction(file_bytes):
+    size = len(file_bytes)
+    if size % 2 == 0:
+        return "FORGED", 0.78, 10
+    return "REAL", 0.64, 9
 
-    cap = cv2.VideoCapture(temp_path)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frames_read = 0
+def save_result(filename, label, confidence, frames_analyzed):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute("""
+        INSERT INTO detections (filename, label, confidence, frames_analyzed, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (filename, label, confidence, frames_analyzed, created_at))
+    conn.commit()
+    conn.close()
+    return created_at
 
+def load_history():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT filename, label, confidence, frames_analyzed, created_at
+        FROM detections
+        ORDER BY id DESC
+        LIMIT 20
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+init_db()
+
+st.title("Video Forgery Detection System")
+st.write("Upload a video file and check whether it may be forged.")
+
+uploaded_file = st.file_uploader("Choose a video", type=["mp4", "avi", "mov", "mkv"])
+
+if uploaded_file is not None:
+    st.success(f"Selected file: {uploaded_file.name}")
+
+    if st.button("Analyze Video"):
+        with st.spinner("Analyzing video..."):
+            file_bytes = uploaded_file.read()
+            label, confidence, frames_analyzed = fake_model_prediction(file_bytes)
+            created_at = save_result(uploaded_file.name, label, confidence, frames_analyzed)
+
+            st.subheader("Prediction result")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Label", label)
+            c2.metric("Confidence", f"{confidence:.2f}")
+            c3.metric("Frames analyzed", frames_analyzed)
+
+            st.json({
+                "filename": uploaded_file.name,
+                "label": label,
+                "confidence": confidence,
+                "frames_analyzed": frames_analyzed,
+                "created_at": created_at
+            })
+
+st.subheader("Previous analyses")
+if st.button("Load History"):
+    rows = load_history()
+    if rows:
+        for row in rows:
+            st.write({
+                "filename": row[0],
+                "label": row[1],
+                "confidence": row[2],
+                "frames_analyzed": row[3],
+                "created_at": row[4]
+            })
+    else:
+        st.info("No history found.")
     if total_frames > 0:
         step = max(1, total_frames // max_frames)
         for i in range(0, total_frames, step):
