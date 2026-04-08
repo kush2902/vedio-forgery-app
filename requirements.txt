@@ -1,4 +1,1 @@
 streamlit==1.39.0
-pandas==2.2.3
-opencv-python-headless
-numpy==2.1.1
